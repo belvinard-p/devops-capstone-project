@@ -28,3 +28,40 @@ To reactivate the environment later:
 ```powershell
 .\venv\Scripts\Activate.ps1
 ```
+
+---
+
+## Exercise 1: Configured `setup.cfg` for Nosetests
+
+We updated the `setup.cfg` file to include all the necessary nosetests flags so that running `nosetests` alone (without any command-line arguments) will automatically:
+
+- Show verbose output (`verbosity=2`)
+- Use the spec plugin for readable test names (`with-spec=1`)
+- Display results in color (`spec-color=1`)
+- Run code coverage analysis (`with-coverage=1`)
+- Erase previous coverage data before each run (`cover-erase=1`)
+- Measure coverage only for the `service` package (`cover-package=service`)
+
+### Why
+
+This is the "Set up the development environment" user story (technical debt). Instead of typing the full command every time:
+
+```bash
+nosetests -vv --with-spec --spec-color --with-coverage --cover-erase --cover-package=service
+```
+
+We just run:
+
+```bash
+nosetests
+```
+
+And all flags are picked up automatically from `setup.cfg`.
+
+### Git Workflow
+
+1. Created branch `dev-setup`.
+2. Edited `setup.cfg` with the nosetests configuration.
+3. Committed with message: `"added nose arguments"`.
+4. Pushed branch and created a Pull Request into `main`.
+5. Merged the PR and deleted the branch.
