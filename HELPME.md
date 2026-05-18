@@ -169,7 +169,3 @@ $env:DATABASE_URI = "postgresql://postgres:belvi@localhost:5432/accounts"
 pytest tests/test_routes.py -v
 
 
-git add requirements.txt service/__init__.py
-git commit -m "added flask-talisman for security headers"
-git push
-
