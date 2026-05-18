@@ -17,7 +17,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: accounts
-          image: accounts:1
+          image: IMAGE_NAME_HERE
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
