@@ -525,3 +525,24 @@ kubectl delete -f deploy/
 | `oc new-app postgresql-ephemeral` | `kubectl apply -f deploy/postgresql.yaml` |
 
 
+kubectl apply -f deploy/secret.yaml
+kubectl apply -f deploy/postgresql.yaml
+kubectl apply -f deploy/deployment.yaml
+kubectl apply -f deploy/service.yaml
+
+kubectl port-forward svc/accounts 8080:8080
+
+kubectl get svc accounts
+
+# Rebuild the image
+docker build -t accounts:1 .
+
+# Restart the deployment to pick up the new image
+kubectl rollout restart deployment accounts
+kubectl port-forward svc/accounts 8080:8080
+
+
+curl.exe http://localhost:8080
+
+
+
