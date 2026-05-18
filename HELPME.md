@@ -860,10 +860,8 @@ tkn pipeline start cd-pipeline `
     --showlog
 ```
 
-### Git Workflow
+# Apply to cluster
+kubectl apply -f tekton/tasks.yaml
 
-```powershell
-git commit -am "added lint task"
-git push --set-upstream origin cd-pipeline
-```
+
 
