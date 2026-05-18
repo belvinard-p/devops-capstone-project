@@ -795,4 +795,75 @@ Copy-Item "$env:TEMP\tkn\tkn.exe" -Destination ".\venv\Scripts\tkn.exe"
 tkn version
 ```
 
+---
+
+## Exercise 9: Add the Lint Task to the CD Pipeline
+
+We added a `lint` task to the Tekton pipeline that uses the `flake8` catalog task to check code quality.
+
+### What We Did
+
+1. Installed the `flake8` task from the Tekton Catalog:
+   ```powershell
+   kubectl apply -f https://raw.githubusercontent.com/tektoncd/catalog/main/task/flake8/0.1/flake8.yaml
+   ```
+
+2. Added the `lint` task to `tekton/pipeline.yaml`:
+   ```yaml
+   - name: lint
+     workspaces:
+       - name: source
+         workspace: pipeline-workspace
+     taskRef:
+       name: flake8
+     params:
+     - name: image
+       value: "python:3.9-slim"
+     - name: args
+       value: ["--count","--max-complexity=10","--max-line-length=127","--statistics"]
+     runAfter:
+       - clone
+   ```
+
+### How It Works
+
+- **`taskRef: flake8`** — References the flake8 task installed from Tekton Catalog
+- **`workspace: source`** — The flake8 task expects a workspace named `source` (where the cloned code lives)
+- **`image: python:3.9-slim`** — The container image used to run flake8
+- **`args`** — Flake8 arguments:
+  - `--count` — Show total number of errors
+  - `--max-complexity=10` — Maximum allowed cyclomatic complexity
+  - `--max-line-length=127` — Maximum line length
+  - `--statistics` — Show summary of errors by type
+- **`runAfter: clone`** — Lint only runs after the code has been cloned
+
+### Pipeline Flow After This Change
+
+```
+init → clone → lint
+```
+
+### How to Apply and Run
+
+```powershell
+# Install flake8 task
+kubectl apply -f https://raw.githubusercontent.com/tektoncd/catalog/main/task/flake8/0.1/flake8.yaml
+
+# Apply updated pipeline
+kubectl apply -f tekton/pipeline.yaml
+
+# Run the pipeline
+tkn pipeline start cd-pipeline `
+    -p repo-url="https://github.com/belvinard-p/devops-capstone-project.git" `
+    -p branch="main" `
+    -w name=pipeline-workspace,claimName=pipelinerun-pvc `
+    --showlog
+```
+
+### Git Workflow
+
+```powershell
+git commit -am "added lint task"
+git push --set-upstream origin cd-pipeline
+```
 
