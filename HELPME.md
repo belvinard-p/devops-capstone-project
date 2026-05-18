@@ -164,8 +164,170 @@ git commit -am "implemented read account"
 git push --set-upstream origin <new_branch>
 # Create PR on GitHub → Merge → Delete branch
 ```
-pip install flask-talisman
+---
+
+## Exercise 3: Write a Security Headers Test Case (TDD)
+
+Following TDD practices, we wrote a test **before** implementing the feature.
+
+### What We Did
+
+1. Added `HTTPS_ENVIRON` variable in `tests/test_routes.py`:
+   ```python
+   HTTPS_ENVIRON = {'wsgi.url_scheme': 'https'}
+   ```
+
+2. Added `test_security_headers` test case that:
+   - Calls `GET /` with HTTPS enabled via `environ_overrides=HTTPS_ENVIRON`
+   - Asserts HTTP 200 response
+   - Checks for 4 security headers:
+     - `X-Frame-Options: SAMEORIGIN`
+     - `X-Content-Type-Options: nosniff`
+     - `Content-Security-Policy: default-src 'self'; object-src 'none'`
+     - `Referrer-Policy: strict-origin-when-cross-origin`
+
+### Result
+
+The test **failed** as expected (AssertionError: None != 'SAMEORIGIN') because Flask-Talisman was not yet implemented. This is correct TDD — write the test first, then make it pass.
+
+---
+
+## Exercise 4: Add Security Headers with Flask-Talisman
+
+We implemented Flask-Talisman to make the security headers test pass.
+
+### What We Did
+
+1. Added `flask-talisman==1.1.0` to `requirements.txt`.
+2. Installed it: `pip install flask-talisman`
+3. Updated `service/__init__.py`:
+   ```python
+   from flask_talisman import Talisman
+   talisman = Talisman(app)
+   ```
+
+### What Flask-Talisman Does
+
+- Automatically adds security headers to all responses
+- Forces HTTPS by redirecting HTTP requests (302 → HTTPS)
+- Protects against clickjacking (`X-Frame-Options`)
+- Prevents MIME-type sniffing (`X-Content-Type-Options`)
+- Restricts resource loading (`Content-Security-Policy`)
+- Controls referrer information (`Referrer-Policy`)
+
+---
+
+## Exercise 5: Disable Forced HTTPS in Tests
+
+Talisman forces all requests to use HTTPS, which caused all tests to fail with `302 != expected_status` because the test client uses HTTP.
+
+### What We Did
+
+1. Imported `talisman` in `tests/test_routes.py`:
+   ```python
+   from service import talisman
+   ```
+
+2. Added `talisman.force_https = False` in `setUpClass()`:
+   ```python
+   @classmethod
+   def setUpClass(cls):
+       # ... other setup ...
+       talisman.force_https = False
+   ```
+
+### Why
+
+- **Production:** Talisman forces HTTPS (secure)
+- **Testing:** We disable forced HTTPS so the test client can use HTTP without getting 302 redirects
+- The `test_security_headers` test still works because it explicitly uses `HTTPS_ENVIRON`
+
+---
+
+## Exercise 6: Validate Security Headers (Verification)
+
+We verified that Talisman works correctly in production mode by running the Flask app and using `curl`.
+
+### What We Did
+
+1. Started the Flask app: `flask run` (runs on port 8000)
+2. In a second terminal: `curl.exe -I http://localhost:8000`
+
+### Result
+
+```
+HTTP/1.1 302 FOUND
+Location: https://localhost:8000/
+X-Frame-Options: SAMEORIGIN
+X-Content-Type-Options: nosniff
+Content-Security-Policy: default-src 'self'; object-src 'none'
+Referrer-Policy: strict-origin-when-cross-origin
+```
+
+- **302 FOUND** confirms Talisman is redirecting HTTP → HTTPS
+- All security headers are present in the response
+
+### How to Run
+
+```powershell
+.\venv\Scripts\Activate.ps1
 $env:DATABASE_URI = "postgresql://postgres:belvi@localhost:5432/accounts"
-pytest tests/test_routes.py -v
+flask run
+# In another terminal:
+curl.exe -I http://localhost:8000
+```
+
+### How to Run Tests
+
+```powershell
+.\venv\Scripts\Activate.ps1
+$env:DATABASE_URI = "postgresql://postgres:belvi@localhost:5432/accounts"
+pytest tests/test_routes.py -v --cov=service --cov-report=term-missing
+```
+
+---
+
+## Exercise 7: Add CORS Policies
+
+We added Cross-Origin Resource Sharing (CORS) support using Flask-Cors, allowing other microservices/frontends to call our REST API from different origins.
+
+### What We Did
+
+1. Added `test_cors_security` test case in `tests/test_routes.py`:
+   ```python
+   def test_cors_security(self):
+       """It should return a CORS header"""
+       response = self.client.get('/', environ_overrides=HTTPS_ENVIRON)
+       self.assertEqual(response.status_code, status.HTTP_200_OK)
+       self.assertEqual(response.headers.get('Access-Control-Allow-Origin'), '*')
+   ```
+
+2. Added `flask-cors==3.0.10` to `requirements.txt`.
+
+3. Updated `service/__init__.py`:
+   ```python
+   from flask_cors import CORS
+   CORS(app)
+   ```
+
+### What Flask-CORS Does
+
+- Adds `Access-Control-Allow-Origin: *` header to all responses
+- Allows browsers to make cross-origin requests to our API
+- Required for microservice architectures where the frontend and backend are on different domains
+
+### How to Run Tests
+
+```powershell
+.\venv\Scripts\Activate.ps1
+$env:DATABASE_URI = "postgresql://postgres:belvi@localhost:5432/accounts"
+pytest tests/test_routes.py -v --cov=service --cov-report=term-missing
+```
+
+### Save Test Output (for evidence)
+
+```powershell
+pytest tests/test_routes.py -v --cov=service --cov-report=term-missing > security-headers-done.txt 2>&1
+```
 
 
