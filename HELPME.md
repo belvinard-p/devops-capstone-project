@@ -578,4 +578,221 @@ curl.exe http://localhost:8080
 
 - App accessible in browser at http://localhost:8080 (with force_https=False) ✓
 
+---
+
+## Exercise 8: Create a CD Pipeline with Tekton (Local)
+
+We set up a Tekton-based Continuous Delivery (CD) pipeline locally to automate deployment to Kubernetes.
+
+### Story
+
+**"Create a CD pipeline to automate deployment to Kubernetes"**
+
+- Use Tekton to define the pipeline
+- Pipeline stages: clone → lint → test → build → deploy
+- Manual trigger for this MVP
+
+### What Is Tekton?
+
+Tekton is a Kubernetes-native CI/CD framework. It runs pipeline tasks as pods inside your cluster. Key resources:
+
+| Resource | Purpose |
+|----------|--------|
+| **Task** | A reusable unit of work (like a function) |
+| **Pipeline** | Defines the order of tasks to execute |
+| **PipelineRun** | A single execution of a pipeline |
+| **PersistentVolumeClaim (PVC)** | Shared storage between tasks (workspace) |
+
+### What We Did
+
+1. Created branch `cd-pipeline`.
+2. Modified `tekton/pvc.yaml` for local Kubernetes (removed IBM Cloud-specific `storageClassName`).
+3. Used the existing starter files in `tekton/`:
+
+| File | Purpose |
+|------|--------|
+| `tekton/pvc.yaml` | PersistentVolumeClaim — shared workspace for pipeline tasks |
+| `tekton/tasks.yaml` | Custom tasks: `echo` (prints messages) and `cleanup` (clears workspace) |
+| `tekton/pipeline.yaml` | Pipeline definition with `init` and `clone` tasks |
+
+### Pipeline Structure
+
+The pipeline executes tasks in this order:
+
+```
+init (cleanup workspace) → clone (git-clone repo) → lint → tests → build → deploy
+```
+
+| Task | Runs After | What It Does |
+|------|-----------|-------------|
+| `init` | — | Cleans the workspace (deletes old files) |
+| `clone` | init | Clones the repo from GitHub using `git-clone` catalog task |
+| `lint` | clone | Runs flake8 linter on the code |
+| `tests` | clone | Runs unit tests with nosetests |
+| `build` | lint, tests | Builds the Docker image |
+| `deploy` | build | Deploys to Kubernetes |
+
+### Files Explained
+
+#### `tekton/pvc.yaml` — Workspace Storage
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pipelinerun-pvc
+spec:
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+```
+
+- Creates 1Gi of storage shared between all pipeline tasks
+- Tasks use this to pass the cloned source code between stages
+- `ReadWriteOnce` — can be mounted by one node at a time (sufficient for local)
+
+#### `tekton/tasks.yaml` — Custom Tasks
+
+**`echo` task:** Simply prints a message (used as placeholder for future tasks)
+
+**`cleanup` task:** Deletes all files in the workspace before a new pipeline run starts (ensures a clean slate)
+
+#### `tekton/pipeline.yaml` — Pipeline Definition
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: cd-pipeline
+spec:
+  workspaces:
+    - name: pipeline-workspace
+  params:
+    - name: repo-url
+    - name: branch
+      default: main
+  tasks:
+    - name: init
+      taskRef:
+        name: cleanup
+    - name: clone
+      taskRef:
+        name: git-clone
+      runAfter:
+        - init
+```
+
+- **params:** `repo-url` and `branch` are passed when triggering the pipeline
+- **workspaces:** All tasks share `pipeline-workspace` (backed by the PVC)
+- **taskRef:** References either custom tasks or Tekton Catalog tasks
+- **runAfter:** Controls execution order
+
+### How to Set Up Locally
+
+#### Prerequisites
+
+- Docker Desktop with Kubernetes enabled
+- `kubectl` CLI
+- `tkn` CLI (Tekton CLI)
+
+#### Step 1: Install Tekton on your cluster
+
+```powershell
+kubectl apply --filename https://storage.googleapis.com/tekton-releases/pipeline/latest/release.yaml
+```
+
+Wait for pods to be ready:
+
+```powershell
+kubectl get pods -n tekton-pipelines --watch
+```
+
+#### Step 2: Install Tekton CLI (`tkn`)
+
+Download from: https://github.com/tektoncd/cli/releases
+
+Or with Chocolatey:
+
+```powershell
+choco install tektoncd-cli
+```
+
+#### Step 3: Install the `git-clone` task from Tekton Catalog
+
+```powershell
+kubectl apply -f https://raw.githubusercontent.com/tektoncd/catalog/main/task/git-clone/0.9/git-clone.yaml
+```
+
+#### Step 4: Apply Tekton resources
+
+```powershell
+kubectl apply -f tekton/pvc.yaml
+kubectl apply -f tekton/tasks.yaml
+kubectl apply -f tekton/pipeline.yaml
+```
+
+#### Step 5: Run the pipeline
+
+```powershell
+tkn pipeline start cd-pipeline `
+    -p repo-url="https://github.com/belvinard-p/devops-capstone-project.git" `
+    -p branch="main" `
+    -w name=pipeline-workspace,claimName=pipelinerun-pvc `
+    --showlog
+```
+
+### Useful Tekton Commands
+
+```powershell
+# List pipeline runs
+tkn pipelinerun ls
+
+# View logs of a specific run
+tkn pipelinerun logs <run-name>
+
+# List tasks
+tkn task ls
+
+# List pipelines
+tkn pipeline ls
+
+# Delete a pipeline run
+tkn pipelinerun delete <run-name>
+```
+
+### Key Concepts
+
+| Concept | Explanation |
+|---------|-------------|
+| **Tekton** | Kubernetes-native CI/CD — runs pipelines as pods |
+| **Task** | A single unit of work (e.g., clone, lint, test) |
+| **Pipeline** | Ordered collection of tasks |
+| **PipelineRun** | One execution of a pipeline (like clicking "Run") |
+| **Workspace** | Shared storage (PVC) passed between tasks |
+| **Tekton Catalog** | Library of reusable tasks (git-clone, buildah, etc.) |
+| **runAfter** | Defines task dependencies (execution order) |
+| **params** | Input parameters passed to the pipeline at runtime |
+
+### OpenShift vs Local Equivalents
+
+| OpenShift | Local Kubernetes |
+|-----------|------------------|
+| `oc apply -f tekton/pipeline.yaml` | `kubectl apply -f tekton/pipeline.yaml` |
+| `tkn pipeline start ...` | Same command (tkn works with any Kubernetes) |
+| `tkn pipelinerun ls` | Same command |
+| Uses OpenShift internal registry | Uses local Docker images |
+
+```
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+```
+```
+Invoke-WebRequest -Uri "https://github.com/tektoncd/cli/releases/download/v0.39.0/tkn_0.39.0_Windows_x86_64.zip" -OutFile "$env:TEMP\tkn.zip"
+Expand-Archive -Path "$env:TEMP\tkn.zip" -DestinationPath "$env:TEMP\tkn" -Force
+Copy-Item "$env:TEMP\tkn\tkn.exe" -Destination ".\venv\Scripts\tkn.exe"
+tkn version
+```
+
 
