@@ -330,4 +330,78 @@ pytest tests/test_routes.py -v --cov=service --cov-report=term-missing
 pytest tests/test_routes.py -v --cov=service --cov-report=term-missing > security-headers-done.txt 2>&1
 ```
 
+---
+
+## Sprint 3, Exercise 1–2: Containerize the Microservice with Docker
+
+We created a `Dockerfile` to containerize the Account microservice for repeatable, portable deployments.
+
+### What We Did
+
+1. Created branch `add-docker`.
+2. Created `Dockerfile` in the project root with the following structure:
+
+```dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY service/ ./service/
+
+RUN useradd --uid 1000 theia && chown -R theia /app
+USER theia
+
+EXPOSE 8080
+CMD ["gunicorn", "--bind=0.0.0.0:8080", "--log-level=info", "service:app"]
+```
+
+### Key Design Decisions
+
+| Requirement | Implementation |
+|-------------|----------------|
+| Base image | `python:3.9-slim` (small footprint) |
+| Install dependencies | `pip install --no-cache-dir` (keeps image small) |
+| Non-root user | Created `theia` user with UID 1000 |
+| Entry point | `gunicorn` WSGI server on port 8080 |
+| Copy only what's needed | `requirements.txt` first (layer caching), then `service/` |
+
+### How to Build and Run
+
+```powershell
+# Build the image
+docker build -t accounts .
+
+# Run the container
+docker run --rm -p 8080:8080 -e DATABASE_URI="postgresql://postgres:belvi@host.docker.internal:5432/accounts" accounts
+```
+
+Note: `host.docker.internal` allows the container to reach PostgreSQL running on the host machine.
+
+### How to Verify
+
+```powershell
+# In another terminal
+curl.exe -I http://localhost:8080
+```
+
+### Result
+
+```
+HTTP/1.1 302 FOUND
+Server: gunicorn
+Location: https://localhost:8080/
+Access-Control-Allow-Origin: *
+X-Frame-Options: SAMEORIGIN
+X-Content-Type-Options: nosniff
+Content-Security-Policy: default-src 'self'; object-src 'none'
+Referrer-Policy: strict-origin-when-cross-origin
+```
+
+- gunicorn is serving the app on port 8080 ✓
+- Security headers present ✓
+- CORS header present ✓
+- 302 redirect (Talisman forcing HTTPS) ✓
+
 
