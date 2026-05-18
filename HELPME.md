@@ -432,5 +432,150 @@ Referrer-Policy: strict-origin-when-cross-origin
 - gunicorn is serving the app on port 8080 ✓
 - Security headers present ✓
 - CORS header present ✓
+
+- 302 redirect (Talisman forcing HTTPS) ✓
+
+---
+
+## Exercise 6–7: Deploy to Kubernetes (Local)
+
+We created Kubernetes manifests to deploy the Account microservice locally, simulating what would be done on OpenShift in the Cloud IDE.
+
+### What We Did
+
+1. Created branch `add-kubernetes`.
+2. Created 4 manifest files in the `deploy/` folder:
+
+| File | Purpose |
+|------|--------|
+| `deploy/secret.yaml` | Stores PostgreSQL credentials as a Kubernetes Secret |
+| `deploy/postgresql.yaml` | Deploys PostgreSQL + its internal Service |
+| `deploy/deployment.yaml` | Deploys the accounts microservice (3 replicas) |
+| `deploy/service.yaml` | Exposes the accounts service via NodePort |
+
+### How It Works
+
+#### Secret (`deploy/secret.yaml`)
+
+Stores database credentials securely in Kubernetes:
+- `database-name: accounts`
+- `database-user: postgres`
+- `database-password: pgs3cr3t`
+
+Other manifests reference these values using `secretKeyRef` instead of hardcoding passwords.
+
+#### PostgreSQL (`deploy/postgresql.yaml`)
+
+- Deploys `postgres:alpine` image (1 replica)
+- Reads credentials from the `postgresql` secret
+- Creates an internal ClusterIP Service on port 5432 so the accounts app can reach it via hostname `postgresql`
+
+#### Accounts Deployment (`deploy/deployment.yaml`)
+
+- Deploys the `accounts:latest` image with **3 replicas** for high availability
+- Injects environment variables from the secret:
+  - `DATABASE_HOST=postgresql` (the PostgreSQL service hostname)
+  - `DATABASE_NAME` from secret key `database-name`
+  - `DATABASE_USER` from secret key `database-user`
+  - `DATABASE_PASSWORD` from secret key `database-password`
+
+#### Accounts Service (`deploy/service.yaml`)
+
+- Exposes the accounts deployment externally via **NodePort** on port 8080
+- Allows access from outside the cluster
+
+### How to Deploy Locally
+
+Prerequisite: Docker Desktop with Kubernetes enabled (Settings → Kubernetes → Enable Kubernetes).
+
+```powershell
+# 1. Build the Docker image
+docker build -t accounts:latest .
+
+# 2. Create the secret
+kubectl apply -f deploy/secret.yaml
+
+# 3. Deploy PostgreSQL
+kubectl apply -f deploy/postgresql.yaml
+
+# 4. Deploy the accounts microservice
+kubectl apply -f deploy/deployment.yaml
+
+# 5. Expose the service
+kubectl apply -f deploy/service.yaml
+
+# 6. Verify everything is running
+kubectl get all -l app=accounts
+kubectl get all -l app=postgresql
+```
+
+### How to Access the Service
+
+```powershell
+# Get the NodePort assigned
+kubectl get svc accounts
+
+# Access the service (replace <NodePort> with actual port)
+curl.exe http://localhost:<NodePort>
+```
+
+### Useful Commands
+
+```powershell
+# View secret keys (equivalent of oc describe secret postgresql)
+kubectl describe secret postgresql
+
+# View pod logs
+kubectl logs -l app=accounts
+
+# Check pod status
+kubectl get pods
+
+# Delete everything
+kubectl delete -f deploy/
+```
+
+### Key Concepts
+
+| Concept | Explanation |
+|---------|-------------|
+| **Secret** | Stores sensitive data (passwords) encoded in base64, referenced by pods |
+| **Deployment** | Manages pod replicas, handles rolling updates and self-healing |
+| **Service** | Provides stable networking (DNS name + port) to reach pods |
+| **NodePort** | Exposes a service on a static port on each node for external access |
+| **secretKeyRef** | Injects a specific key from a Secret as an environment variable |
+
+### OpenShift vs Local Kubernetes Equivalents
+
+| OpenShift (`oc`) | Local Kubernetes (`kubectl`) |
+|------------------|-----------------------------|
+| `oc create -f file.yaml` | `kubectl apply -f file.yaml` |
+| `oc get all -l app=accounts` | `kubectl get all -l app=accounts` |
+| `oc describe secret postgresql` | `kubectl describe secret postgresql` |
+| `oc create route edge accounts --service=accounts` | Use NodePort or `kubectl port-forward svc/accounts 8080:8080` |
+| `oc new-app postgresql-ephemeral` | `kubectl apply -f deploy/postgresql.yaml` |
+
+
+kubectl apply -f deploy/secret.yaml
+kubectl apply -f deploy/postgresql.yaml
+kubectl apply -f deploy/deployment.yaml
+kubectl apply -f deploy/service.yaml
+
+kubectl port-forward svc/accounts 8080:8080
+
+kubectl get svc accounts
+
+# Rebuild the image
+docker build -t accounts:1 .
+
+# Restart the deployment to pick up the new image
+kubectl rollout restart deployment accounts
+kubectl port-forward svc/accounts 8080:8080
+
+
+curl.exe http://localhost:8080
+
+
 - App accessible in browser at http://localhost:8080 (with force_https=False) ✓
+
 
