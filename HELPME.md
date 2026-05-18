@@ -863,5 +863,14 @@ tkn pipeline start cd-pipeline `
 # Apply to cluster
 kubectl apply -f tekton/tasks.yaml
 
+# Apply the updated pipeline
+kubectl apply -f tekton/pipeline.yaml
+
+# Run the pipeline
+tkn pipeline start cd-pipeline `
+    -p repo-url="https://github.com/belvinard-p/devops-capstone-project.git" `
+-p branch="main" `
+    -w name=pipeline-workspace,claimName=pipelinerun-pvc `
+--showlog
 
 
