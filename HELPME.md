@@ -873,4 +873,327 @@ tkn pipeline start cd-pipeline `
     -w name=pipeline-workspace,claimName=pipelinerun-pvc `
 --showlog
 
+---
+
+## Exercise 10: Add Test, Build, and Deploy Tasks to the Pipeline
+
+We completed the full CD pipeline by adding the `tests`, `build`, and `deploy` tasks.
+
+### What We Did
+
+#### 1. Created the `nose` Task (`tekton/tasks.yaml`)
+
+Since there's no Tekton Catalog task for nosetests, we wrote a custom one:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: nose
+spec:
+  description: This task will run nosetests on the provided input.
+  workspaces:
+    - name: source
+  params:
+    - name: args
+      description: Arguments to pass to nose
+      type: string
+      default: "-v"
+    - name: database_uri
+      description: Database connection string
+      type: string
+      default: "sqlite:///test.db"
+  steps:
+    - name: nosetests
+      image: python:3.9-slim
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: DATABASE_URI
+          value: $(params.database_uri)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "***** Installing dependencies *****"
+        python -m pip install --upgrade pip wheel
+        pip install -qr requirements.txt
+        echo "***** Running nosetests with: $(params.args)"
+        nosetests $(params.args)
+```
+
+#### 2. Added `tests` Task to Pipeline
+
+```yaml
+- name: tests
+  workspaces:
+    - name: source
+      workspace: pipeline-workspace
+  taskRef:
+    name: nose
+  params:
+  - name: database_uri
+    value: "sqlite:///test.db"
+  - name: args
+    value: "-v --with-spec --spec-color"
+  runAfter:
+    - clone
+```
+
+- Runs **in parallel** with `lint` (both depend only on `clone`)
+- Uses SQLite for testing (no external database needed)
+
+#### 3. Added `build` Task to Pipeline
+
+```yaml
+- name: build
+  workspaces:
+    - name: source
+      workspace: pipeline-workspace
+  taskRef:
+    name: buildah
+    kind: ClusterTask
+  params:
+  - name: IMAGE
+    value: "$(params.build-image)"
+  runAfter:
+    - tests
+    - lint
+```
+
+- Waits for **both** `lint` and `tests` to pass before building
+- Uses `buildah` ClusterTask (OpenShift) to build the Docker image
+- `build-image` parameter added to pipeline spec
+
+#### 4. Added `deploy` Task to Pipeline
+
+```yaml
+- name: deploy
+  workspaces:
+    - name: manifest-dir
+      workspace: pipeline-workspace
+  taskRef:
+    name: openshift-client
+    kind: ClusterTask
+  params:
+  - name: SCRIPT
+    value: |
+      echo "Updating manifest..."
+      sed -i "s|IMAGE_NAME_HERE|$(params.build-image)|g" deploy/deployment.yaml
+      cat deploy/deployment.yaml
+      echo "Deploying to OpenShift..."
+      oc apply -f deploy/
+      oc get pods -l app=accounts
+  runAfter:
+    - build
+```
+
+- Uses `sed` to replace `IMAGE_NAME_HERE` placeholder in `deploy/deployment.yaml` with the actual built image name
+- Applies all manifests in `deploy/` folder
+- Verifies pods are running
+
+#### 5. Updated `deploy/deployment.yaml`
+
+Changed the image to a placeholder:
+
+```yaml
+containers:
+  - name: accounts
+    image: IMAGE_NAME_HERE
+```
+
+The pipeline's deploy task substitutes this at runtime with the actual image name.
+
+### Final Pipeline Flow
+
+```
+init → clone → lint  ─┐
+             → tests ─┼→ build → deploy
+```
+
+### How to Run (OpenShift)
+
+```bash
+tkn pipeline start cd-pipeline \
+    -p repo-url="https://github.com/belvinard-p/devops-capstone-project.git" \
+    -p branch="cd-pipeline" \
+    -p build-image=image-registry.openshift-image-registry.svc:5000/$SN_ICR_NAMESPACE/accounts:1 \
+    -w name=pipeline-workspace,claimName=pipelinerun-pvc \
+    -s pipeline \
+    --showlog
+```
+
+---
+
+## Exercise 11: Local-Compatible CD Pipeline (No OpenShift Required)
+
+The OpenShift pipeline uses `buildah` and `openshift-client` ClusterTasks which don't exist on local Kubernetes. We created local alternatives.
+
+### Problem
+
+| OpenShift ClusterTask | Issue on Local K8s |
+|----------------------|--------------------|
+| `buildah` | Not installed — OpenShift-specific |
+| `openshift-client` | Not installed — requires `oc` CLI |
+| OpenShift internal registry | Doesn't exist locally |
+
+### Solution: Local-Compatible Files
+
+We created 3 new files:
+
+| File | Purpose |
+|------|--------|
+| `tekton/tasks-local.yaml` | Local build (`kaniko`) and deploy (`kubectl`) tasks |
+| `tekton/pipeline-local.yaml` | Pipeline using local tasks instead of ClusterTasks |
+| `tekton/registry.yaml` | In-cluster Docker registry for storing built images |
+
+### `tekton/tasks-local.yaml` — Local Tasks
+
+#### `docker-build` Task (replaces `buildah`)
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: docker-build
+spec:
+  description: Builds a Docker image using Kaniko and pushes to a local registry.
+  workspaces:
+    - name: source
+  params:
+    - name: IMAGE
+      type: string
+    - name: DOCKERFILE
+      type: string
+      default: "Dockerfile"
+  steps:
+    - name: build-and-push
+      image: gcr.io/kaniko-project/executor:latest
+      workingDir: $(workspaces.source.path)
+      args:
+        - --dockerfile=$(params.DOCKERFILE)
+        - --context=$(workspaces.source.path)
+        - --destination=$(params.IMAGE)
+        - --insecure
+        - --skip-tls-verify
+```
+
+**Why Kaniko?** It builds Docker images inside a container without needing a Docker daemon (which isn't available inside Kubernetes pods).
+
+#### `kubectl-deploy` Task (replaces `openshift-client`)
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: kubectl-deploy
+spec:
+  description: Deploys manifests to Kubernetes using kubectl.
+  workspaces:
+    - name: manifest-dir
+  params:
+    - name: script
+      type: string
+  steps:
+    - name: deploy
+      image: bitnami/kubectl:latest
+      workingDir: $(workspaces.manifest-dir.path)
+      securityContext:
+        runAsUser: 0
+      script: |
+        #!/bin/sh
+        set -e
+        $(params.script)
+```
+
+**Why bitnami/kubectl?** It provides `kubectl` in a container so we can run deployment commands inside the pipeline.
+
+### `tekton/pipeline-local.yaml` — Local Pipeline
+
+Same structure as the OpenShift pipeline but references local tasks:
+
+```yaml
+- name: build
+  taskRef:
+    name: docker-build      # instead of buildah ClusterTask
+
+- name: deploy
+  taskRef:
+    name: kubectl-deploy    # instead of openshift-client ClusterTask
+```
+
+### `tekton/registry.yaml` — In-Cluster Registry
+
+Kaniko needs somewhere to push the built image. We deploy a `registry:2` container inside the cluster:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+spec:
+  containers:
+    - name: registry
+      image: registry:2
+      ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+spec:
+  ports:
+    - port: 5000
+```
+
+Images are pushed to `registry:5000/accounts:1` (accessible within the cluster).
+
+### How to Deploy and Run Locally
+
+```powershell
+# 1. Deploy the in-cluster registry
+kubectl apply -f tekton/registry.yaml
+
+# 2. Wait for registry to be ready
+kubectl get pods -l app=registry --watch
+
+# 3. Install catalog tasks
+kubectl apply -f https://raw.githubusercontent.com/tektoncd/catalog/main/task/git-clone/0.9/git-clone.yaml
+kubectl apply -f https://raw.githubusercontent.com/tektoncd/catalog/main/task/flake8/0.1/flake8.yaml
+
+# 4. Apply all tasks and pipeline
+kubectl apply -f tekton/tasks.yaml
+kubectl apply -f tekton/tasks-local.yaml
+kubectl apply -f tekton/pvc.yaml
+kubectl apply -f tekton/pipeline-local.yaml
+
+# 5. Run the local pipeline
+tkn pipeline start cd-pipeline-local `
+    -p repo-url="https://github.com/belvinard-p/devops-capstone-project.git" `
+    -p branch="main" `
+    -p build-image="registry:5000/accounts:1" `
+    -w name=pipeline-workspace,claimName=pipelinerun-pvc `
+    --showlog
+```
+
+### Comparison: OpenShift vs Local Pipeline
+
+| Component | OpenShift (`pipeline.yaml`) | Local (`pipeline-local.yaml`) |
+|-----------|---------------------------|------------------------------|
+| Build task | `buildah` ClusterTask | `docker-build` Task (Kaniko) |
+| Deploy task | `openshift-client` ClusterTask | `kubectl-deploy` Task |
+| Image registry | `image-registry.openshift-image-registry.svc:5000` | `registry:5000` (in-cluster) |
+| Deploy command | `oc apply -f deploy/` | `kubectl apply -f deploy/` |
+| Pipeline name | `cd-pipeline` | `cd-pipeline-local` |
+
+### Save Pipeline Logs (Evidence)
+
+```powershell
+tkn pipelinerun logs -L > pipelinerun.txt
+```
+
+### Verify Deployment
+
+```powershell
+kubectl get all -l app=accounts
+```
 

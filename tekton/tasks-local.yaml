@@ -1,0 +1,50 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: docker-build
+spec:
+  description: This task builds a Docker image using Kaniko and pushes it to a local registry.
+  workspaces:
+    - name: source
+  params:
+    - name: IMAGE
+      description: The image name and tag to build
+      type: string
+    - name: DOCKERFILE
+      description: Path to the Dockerfile
+      type: string
+      default: "Dockerfile"
+  steps:
+    - name: build-and-push
+      image: gcr.io/kaniko-project/executor:latest
+      workingDir: $(workspaces.source.path)
+      args:
+        - --dockerfile=$(params.DOCKERFILE)
+        - --context=$(workspaces.source.path)
+        - --destination=$(params.IMAGE)
+        - --insecure
+        - --skip-tls-verify
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: kubectl-deploy
+spec:
+  description: This task deploys manifests to Kubernetes using kubectl.
+  workspaces:
+    - name: manifest-dir
+  params:
+    - name: script
+      description: The kubectl script to run
+      type: string
+  steps:
+    - name: deploy
+      image: bitnami/kubectl:latest
+      workingDir: $(workspaces.manifest-dir.path)
+      securityContext:
+        runAsUser: 0
+      script: |
+        #!/bin/sh
+        set -e
+        $(params.script)
