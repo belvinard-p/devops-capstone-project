@@ -373,11 +373,15 @@ CMD ["gunicorn", "--bind=0.0.0.0:8080", "--log-level=info", "service:app"]
 # Build the image
 docker build -t accounts .
 
-# Run the container
-docker run --rm -p 8080:8080 -e DATABASE_URI="postgresql://postgres:belvi@host.docker.internal:5432/accounts" accounts
+# Run the container (using --link to connect to postgres container)
+docker run --rm -p 8080:8080 --link postgres -e DATABASE_URI="postgresql://postgres:postgres@postgres:5432/postgres" accounts
 ```
 
-Note: `host.docker.internal` allows the container to reach PostgreSQL running on the host machine.
+Alternatively, use `host.docker.internal` to reach PostgreSQL on the host:
+
+```powershell
+docker run --rm -p 8080:8080 -e DATABASE_URI="postgresql://postgres:belvi@host.docker.internal:5432/accounts" accounts
+```
 
 ### How to Verify
 
@@ -385,6 +389,32 @@ Note: `host.docker.internal` allows the container to reach PostgreSQL running on
 # In another terminal
 curl.exe -I http://localhost:8080
 ```
+
+### Accessing in Browser
+
+By default, Talisman forces HTTPS which causes a 302 redirect. Since there's no SSL certificate locally, the browser can't follow the redirect.
+
+**Fix:** We temporarily set `force_https=False` in `service/__init__.py`:
+
+```python
+talisman = Talisman(app, force_https=False)
+```
+
+Then rebuild and run:
+
+```powershell
+docker build -t accounts .
+docker run --rm -p 8080:8080 --link postgres -e DATABASE_URI="postgresql://postgres:postgres@postgres:5432/postgres" accounts
+```
+
+Now open browser to: **http://localhost:8080** — the JSON output is visible.
+
+> **Important:** Remember to revert back to `talisman = Talisman(app)` after taking the screenshot for production security.
+
+### Troubleshooting
+
+- **Port already allocated:** Stop the old container first with `docker stop <container_id>` (use `docker ps` to find it)
+- **Password authentication failed:** The postgres container uses password `postgres` (not `belvi`). Use `docker inspect postgres | findstr POSTGRES_PASSWORD` to verify.
 
 ### Result
 
@@ -402,6 +432,5 @@ Referrer-Policy: strict-origin-when-cross-origin
 - gunicorn is serving the app on port 8080 ✓
 - Security headers present ✓
 - CORS header present ✓
-- 302 redirect (Talisman forcing HTTPS) ✓
-
+- App accessible in browser at http://localhost:8080 (with force_https=False) ✓
 
